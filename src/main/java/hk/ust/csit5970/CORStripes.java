@@ -33,6 +33,8 @@ public class CORStripes extends Configured implements Tool {
 	 */
 	private static class CORMapper1 extends
 			Mapper<LongWritable, Text, Text, IntWritable> {
+		private final static Text WORD = new Text();
+
 		@Override
 		public void map(LongWritable key, Text value, Context context)
 				throws IOException, InterruptedException {
@@ -43,6 +45,20 @@ public class CORStripes extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			while (doc_tokenizer.hasMoreTokens()) {
+				String token = doc_tokenizer.nextToken().toLowerCase();
+				if (word_set.containsKey(token)) {
+					word_set.put(token, word_set.get(token) + 1);
+				} else {
+					word_set.put(token, 1);
+				}
+			}
+			
+			// Emit word frequencies
+			for (Map.Entry<String, Integer> entry : word_set.entrySet()) {
+				WORD.set(entry.getKey());
+				context.write(WORD, new IntWritable(entry.getValue()));
+			}
 		}
 	}
 
@@ -56,6 +72,11 @@ public class CORStripes extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			int sum = 0;
+			for (IntWritable val : values) {
+				sum += val.get();
+			}
+			context.write(key, new IntWritable(sum));
 		}
 	}
 
@@ -63,6 +84,9 @@ public class CORStripes extends Configured implements Tool {
 	 * TODO: Write your second-pass Mapper here.
 	 */
 	public static class CORStripesMapper2 extends Mapper<LongWritable, Text, Text, MapWritable> {
+		private final static Text WORD = new Text();
+    	private final static IntWritable ONE = new IntWritable(1);
+		
 		@Override
 		protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
 			Set<String> sorted_word_set = new TreeSet<String>();
@@ -75,6 +99,25 @@ public class CORStripes extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			for (String word : sorted_word_set) {
+				MapWritable map = new MapWritable();
+				
+				// Add all other words as co-occurring
+				for (String coWord : sorted_word_set) {
+					if (!word.equals(coWord)) {
+						// Ensure alphabetical ordering
+						if (word.compareTo(coWord) < 0) {
+							map.put(new Text(coWord), ONE);
+						}
+					}
+				}
+				
+				// Only emit if we have co-occurring words
+				if (!map.isEmpty()) {
+					WORD.set(word);
+					context.write(WORD, map);
+				}
+			}
 		}
 	}
 
@@ -89,6 +132,28 @@ public class CORStripes extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			MapWritable combined = new MapWritable();
+        
+			// Process each map
+			for (MapWritable value : values) {
+				// Add all entries from this map to the combined map
+				for (Writable coWord : value.keySet()) {
+					IntWritable count = (IntWritable) value.get(coWord);
+					if (combined.containsKey(coWord)) {
+						// Add to existing count
+						IntWritable existingCount = (IntWritable) combined.get(coWord);
+						combined.put(coWord, new IntWritable(existingCount.get() + count.get()));
+					} else {
+						// Add new entry
+						combined.put(coWord, count);
+					}
+				}
+			}
+			
+			// Only emit if we have co-occurring words
+			if (!combined.isEmpty()) {
+				context.write(key, combined);
+			}
 		}
 	}
 
@@ -98,6 +163,7 @@ public class CORStripes extends Configured implements Tool {
 	public static class CORStripesReducer2 extends Reducer<Text, MapWritable, PairOfStrings, DoubleWritable> {
 		private static Map<String, Integer> word_total_map = new HashMap<String, Integer>();
 		private static IntWritable ZERO = new IntWritable(0);
+		private final static DoubleWritable CORRELATION = new DoubleWritable();
 
 		/*
 		 * Preload the middle result file.
@@ -142,6 +208,48 @@ public class CORStripes extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			String wordA = key.toString();
+        
+			// Skip if we don't have data for word A
+			if (!word_total_map.containsKey(wordA)) {
+				return;
+			}
+			
+			int freqA = word_total_map.get(wordA);
+			
+			// Combine all maps first
+			MapWritable combined = new MapWritable();
+			for (MapWritable value : values) {
+				for (Writable coWord : value.keySet()) {
+					IntWritable count = (IntWritable) value.get(coWord);
+					if (combined.containsKey(coWord)) {
+						IntWritable existingCount = (IntWritable) combined.get(coWord);
+						combined.put(coWord, new IntWritable(existingCount.get() + count.get()));
+					} else {
+						combined.put(coWord, count);
+					}
+				}
+			}
+			
+			// Calculate correlation for each co-occurring word
+			for (Writable coWordWritable : combined.keySet()) {
+				String wordB = ((Text)coWordWritable).toString();
+				
+				// Skip if we don't have data for word B
+				if (!word_total_map.containsKey(wordB)) {
+					continue;
+				}
+				
+				int freqB = word_total_map.get(wordB);
+				int pairFreq = ((IntWritable)combined.get(coWordWritable)).get();
+				
+				// Calculate correlation coefficient
+				double correlation = (double) pairFreq / (freqA * freqB);
+				CORRELATION.set(correlation);
+				
+				// Emit result as (wordA, wordB), correlation
+				context.write(new PairOfStrings(wordA, wordB), CORRELATION);
+			}
 		}
 	}
 

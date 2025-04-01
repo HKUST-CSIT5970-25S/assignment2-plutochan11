@@ -43,6 +43,8 @@ public class CORPairs extends Configured implements Tool {
 	 */
 	private static class CORMapper1 extends
 			Mapper<LongWritable, Text, Text, IntWritable> {
+		private final static Text WORD = new Text();
+
 		@Override
 		public void map(LongWritable key, Text value, Context context)
 				throws IOException, InterruptedException {
@@ -53,6 +55,21 @@ public class CORPairs extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			// Count each word's occurrence in this line
+			while (doc_tokenizer.hasMoreTokens()) {
+				String token = doc_tokenizer.nextToken().toLowerCase();
+				if (word_set.containsKey(token)) {
+					word_set.put(token, word_set.get(token) + 1);
+				} else {
+					word_set.put(token, 1);
+				}
+			}
+			
+			// Emit word frequencies
+			for (Map.Entry<String, Integer> entry : word_set.entrySet()) {
+				WORD.set(entry.getKey());
+				context.write(WORD, new IntWritable(entry.getValue()));
+			}
 		}
 	}
 
@@ -66,6 +83,11 @@ public class CORPairs extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			int sum = 0;
+			for (IntWritable val : values) {
+				sum += val.get();
+			}
+			context.write(key, new IntWritable(sum));
 		}
 	}
 
@@ -74,6 +96,8 @@ public class CORPairs extends Configured implements Tool {
 	 * TODO: Write your second-pass Mapper here.
 	 */
 	public static class CORPairsMapper2 extends Mapper<LongWritable, Text, PairOfStrings, IntWritable> {
+		private final static IntWritable ONE = new IntWritable(1);
+
 		@Override
 		protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
 			// Please use this tokenizer! DO NOT implement a tokenizer by yourself!
@@ -81,6 +105,31 @@ public class CORPairs extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			Set<String> uniqueWords = new HashSet<>();
+			while (doc_tokenizer.hasMoreTokens()) {
+				uniqueWords.add(doc_tokenizer.nextToken().toLowerCase());
+			}
+			
+			// Convert to array for easier processing
+			String[] words = uniqueWords.toArray(new String[0]);
+			
+			// Generate word pairs (ensuring alphabetical order)
+			for (int i = 0; i < words.length; i++) {
+				for (int j = i + 1; j < words.length; j++) {
+					String word1 = words[i];
+					String word2 = words[j];
+					
+					// Ensure alphabetical ordering
+					if (word1.compareTo(word2) > 0) {
+						String temp = word1;
+						word1 = word2;
+						word2 = temp;
+					}
+					
+					// Emit word pair with count 1
+					context.write(new PairOfStrings(word1, word2), ONE);
+				}
+			}
 		}
 	}
 
@@ -93,6 +142,11 @@ public class CORPairs extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			int sum = 0;
+			for (IntWritable val : values) {
+				sum += val.get();
+			}
+			context.write(key, new IntWritable(sum));
 		}
 	}
 
@@ -101,6 +155,7 @@ public class CORPairs extends Configured implements Tool {
 	 */
 	public static class CORPairsReducer2 extends Reducer<PairOfStrings, IntWritable, PairOfStrings, DoubleWritable> {
 		private final static Map<String, Integer> word_total_map = new HashMap<String, Integer>();
+		private final static DoubleWritable CORRELATION = new DoubleWritable();
 
 		/*
 		 * Preload the middle result file.
@@ -145,6 +200,29 @@ public class CORPairs extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			// Calculate the frequency of the word pair (A, B)
+			int pairFreq = 0;
+			for (IntWritable val : values) {
+				pairFreq += val.get();
+			}
+			
+			// Get individual word frequencies
+			String wordA = key.getLeftElement();
+			String wordB = key.getRightElement();
+			
+			if (!word_total_map.containsKey(wordA) || !word_total_map.containsKey(wordB)) {
+				return; // Skip if we don't have data for either word
+			}
+			
+			int freqA = word_total_map.get(wordA);
+			int freqB = word_total_map.get(wordB);
+			
+			// Calculate correlation coefficient
+			double correlation = (double) pairFreq / (freqA * freqB);
+			CORRELATION.set(correlation);
+			
+			// Emit result
+			context.write(key, CORRELATION);
 		}
 	}
 

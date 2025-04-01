@@ -49,10 +49,35 @@ public class BigramFrequencyPairs extends Configured implements Tool {
 				throws IOException, InterruptedException {
 			String line = ((Text) value).toString();
 			String[] words = line.trim().split("\\s+");
+			String MARGINAL_MARKER = "*";
 			
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			if (words.length > 1) {
+				String previousWord = words[0];
+				BIGRAM.set(previousWord, MARGINAL_MARKER);
+				context.write(BIGRAM, ONE);
+
+				for (int i = 1; i < words.length; i++) {
+                    String currentWord = words[i];
+                    
+                    // Skip empty words
+                    if (currentWord.length() == 0) {
+                        continue;
+                    }
+                    
+                    // Emit bigram count
+                    BIGRAM.set(previousWord, currentWord);
+                    context.write(BIGRAM, ONE);
+                    
+                    // Emit marginal count for current word
+                    BIGRAM.set(currentWord, MARGINAL_MARKER);
+                    context.write(BIGRAM, ONE);
+                    
+                    previousWord = currentWord;
+                }
+			}
 		}
 	}
 
@@ -64,6 +89,8 @@ public class BigramFrequencyPairs extends Configured implements Tool {
 
 		// Reuse objects.
 		private final static FloatWritable VALUE = new FloatWritable();
+		private final static String MARGINAL_MARKER = "*";
+        private java.util.HashMap<String, Integer> marginalCounts = new java.util.HashMap<>();
 
 		@Override
 		public void reduce(PairOfStrings key, Iterable<IntWritable> values,
@@ -71,6 +98,27 @@ public class BigramFrequencyPairs extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			int sum = 0;
+            for (IntWritable value : values) {
+                sum += value.get();
+            }
+            
+            String leftWord = key.getLeftElement();
+            String rightWord = key.getRightElement();
+            
+            if (rightWord.equals(MARGINAL_MARKER)) {
+                // This is a marginal count - store it and output it
+                marginalCounts.put(leftWord, sum);
+                VALUE.set((float) sum);
+                context.write(new PairOfStrings(leftWord, ""), VALUE);
+            } else {
+                // This is a bigram count - calculate and output the frequency
+                if (marginalCounts.containsKey(leftWord)) {
+                    float relativeFrequency = (float) sum / marginalCounts.get(leftWord);
+                    VALUE.set(relativeFrequency);
+                    context.write(key, VALUE);
+                }
+            }
 		}
 	}
 	
@@ -84,6 +132,12 @@ public class BigramFrequencyPairs extends Configured implements Tool {
 			/*
 			 * TODO: Your implementation goes here.
 			 */
+			int sum = 0;
+            for (IntWritable value : values) {
+                sum += value.get();
+            }
+            SUM.set(sum);
+            context.write(key, SUM);
 		}
 	}
 
